@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflare-ddns
+  namespace: default
+  labels:
+    app.kubernetes.io/name: cloudflare-ddns
+    app.kubernetes.io/instance: cloudflare-ddns
+data:
+  cloudflare-ddns.sh: |
+    #!/bin/bash
+    CF_ZONE_API_TOKEN=$(echo -n "$CF_ZONE_API_TOKEN" | base64 -d)
+    CF_DNS_API_TOKEN=$(echo -n "$CF_DNS_API_TOKEN" | base64 -d)
+
+    CF_API_URL="https://api.cloudflare.com/client/v4/zones"
+
+    CF_RECORD=$(curl -sS -X GET \
+      "$CF_API_URL/$CF_ZONE_API_TOKEN/dns_records?type=A" \
+      -H "Authorization: Bearer $CF_DNS_API_TOKEN" \
+      -H "Content-Type: application/json")
+
+    OLDIP=$(echo "$CF_RECORD" | jq -r '.result[].content')
+    IP=$(curl -s icanhazip.com)
+
+    change_record() {
+        ID=$(echo "$CF_RECORD" | jq -r '.result[].id')
+        NAME=$(echo "$CF_RECORD" | jq -r '.result[].name')
+        TYPE=$(echo "$CF_RECORD" | jq -r '.result[].type')
+        TTL=$(echo "$CF_RECORD" | jq -r '.result[].ttl')
+        PROXIED=$(echo "$CF_RECORD" | jq -r '.result[].proxied')
+        curl -sSo /dev/null -X PUT \
+        "$CF_API_URL/$CF_ZONE_API_TOKEN/dns_records/$ID" \
+        -H "Authorization: Bearer $CF_DNS_API_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"${TYPE}\",\"name\":\"${NAME}\",\"content\":\"${IP}\",\"ttl\":\"${TTL}\",\"proxied\":${PROXIED}}"
+    }
+
+    if [[ "$IP" != "$OLDIP" ]]; then
+        change_record
+        echo "[INFO] Updated Cloudflare DNS from "$OLDIP" to "$IP""
+      else
+        echo "[INFO] No DNS update required"
+    fi
+
+---
+apiVersion: v1                                                                                                                                                                                                              
+kind: Secret
+metadata:
+  name: cloudflare-api-credentials
+  namespace: default
+type: Opaque
+stringData:
+  CF_ZONE_API_TOKEN: << put your base64 encoded ZONE api token here >>
+  CF_DNS_API_TOKEN: << put your base64 encoded DNS api token here >>
+
+---
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  namespace: default
+  name: cloudflare-ddns
+spec:
+  schedule: "0 * * * *"
+  failedJobsHistoryLimit: 1
+  successfulJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: cloudflare-ddns
+            image: ghcr.io/jr0dd/cron:latest
+            imagePullPolicy: IfNotPresent
+            envFrom:
+            - secretRef:
+                name: cloudflare-api-credentials
+            command:
+            - "/bin/bash"
+            - "/app/cloudflare-ddns.sh"
+            volumeMounts:
+            - name: cloudflare-ddns
+              mountPath: /app/cloudflare-ddns.sh
+              subPath: cloudflare-ddns.sh
+              readOnly: true
+          volumes:
+          - name: cloudflare-ddns
+            projected:
+              defaultMode: 0775
+              sources:
+              - configMap:
+                  name: cloudflare-ddns
+                  items:
+                  - key: cloudflare-ddns.sh
+                    path: cloudflare-ddns.sh
