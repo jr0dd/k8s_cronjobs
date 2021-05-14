@@ -9,8 +9,6 @@ metadata:
 data:
   cloudflare-ddns.sh: |
     #!/bin/bash
-    CF_ZONE_API_TOKEN=$(echo -n "$CF_ZONE_API_TOKEN" | base64 -d)
-    CF_DNS_API_TOKEN=$(echo -n "$CF_DNS_API_TOKEN" | base64 -d)
 
     CF_API_URL="https://api.cloudflare.com/client/v4/zones"
 
@@ -49,7 +47,7 @@ metadata:
   name: cloudflare-api-credentials
   namespace: default
 type: Opaque
-stringData:
+data:
   CF_ZONE_API_TOKEN: << put your base64 encoded ZONE api token here >>
   CF_DNS_API_TOKEN: << put your base64 encoded DNS api token here >>
 
